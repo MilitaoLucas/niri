@@ -2588,7 +2588,7 @@ fn move_window_to_output_targeting_hidden_workspace() {
         },
         Op::AddNamedWorkspace {
             ws_name: 2,
-            output_name: None,
+            output_names: vec![],
             layout_config: None,
         },
         Op::AddWindow {
@@ -2612,7 +2612,7 @@ fn re_hiding_on_switch_away_keeps_the_switch_target_valid() {
     check_ops([
         Op::AddNamedWorkspace {
             ws_name: 5,
-            output_name: None,
+            output_names: vec![],
             layout_config: None,
         },
         Op::AddOutput(1),
@@ -2773,7 +2773,7 @@ fn moving_last_visible_workspace_away_keeps_visible_region() {
         Op::AddOutput(1),
         Op::AddNamedWorkspace {
             ws_name: 1,
-            output_name: None,
+            output_names: vec![],
             layout_config: None,
         },
         Op::ToggleWorkspaceVisibility(1),
@@ -2789,7 +2789,7 @@ fn move_workspace_down_stops_at_hidden_block() {
         Op::AddOutput(1),
         Op::AddNamedWorkspace {
             ws_name: 1,
-            output_name: None,
+            output_names: vec![],
             layout_config: None,
         },
         Op::ToggleWorkspaceVisibility(1),

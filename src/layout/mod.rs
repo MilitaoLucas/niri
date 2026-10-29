@@ -849,8 +849,9 @@ impl<W: LayoutElement> Layout<W> {
                     // left, both will be empty and one of them needs to be removed.
                     // clean_up_workspaces takes care of this.
                     if stopped_ws_switch
-                        || (source.options.layout.empty_workspace_above_first
-                            && source.workspaces.len() == 2)
+                        || (source.workspace_switch.is_none()
+                        && source.options.layout.empty_workspace_above_first
+                        && source.workspaces.len() == 2)
                     {
                         source.clean_up_workspaces();
                     }
