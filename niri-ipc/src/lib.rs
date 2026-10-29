@@ -71,6 +71,8 @@ pub enum Request {
     Outputs,
     /// Request information about workspaces.
     Workspaces,
+    /// Request information for workspaces, including hidden.
+    WorkspacesWithHidden,
     /// Request information about open windows.
     Windows,
     /// Request information about layer-shell surfaces.
@@ -1492,6 +1494,8 @@ pub struct Workspace {
     pub is_focused: bool,
     /// Id of the active window on this workspace, if any.
     pub active_window_id: Option<u64>,
+    /// Is this workspace hidden
+    pub is_hidden: bool,
 }
 
 /// Configured keyboard layouts.

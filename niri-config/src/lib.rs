@@ -2835,12 +2835,14 @@ mod tests {
                         "eDP-1",
                         "DP-1",
                     ],
+                    hidden: None,
                     layout: None,
                 },
                 Workspace {
                     name: WorkspaceName(
                         "workspace-2",
                     ),
+                    hidden: None,
                     open_on_output: [],
                     layout: None,
                 },
@@ -2848,6 +2850,7 @@ mod tests {
                     name: WorkspaceName(
                         "workspace-3",
                     ),
+                    hidden: None,
                     open_on_output: [],
                     layout: None,
                 },

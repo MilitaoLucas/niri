@@ -757,6 +757,31 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
+    pub fn toggle_workspace_visibility(&mut self, workspace_name: String) {
+        let Some(monitor) = self.monitor_for_workspace_mut(&workspace_name) else {
+            return;
+        };
+        let Some(ws_idx) = monitor.find_named_workspace_index(&workspace_name) else {
+            return;
+        };
+
+        let is_hidden = monitor.workspaces[ws_idx].hidden;
+
+        if is_hidden {
+            let Some(ws) = monitor.find_named_workspace(&workspace_name) else {
+                return;
+            };
+            monitor.unhide_workspace_by_id(ws.id(), false);
+            // unhide_workspace_by_id clears the workspace switch when it moves
+            // the workspace, but it can also return early without doing so.
+            if monitor.workspace_switch.is_none() {
+                monitor.clean_up_workspaces();
+            }
+        } else {
+            monitor.hide_workspace_by_idx(ws_idx);
+        }
+    }
+
     pub fn add_output(&mut self, output: Output, layout_config: Option<LayoutPart>) {
         self.monitor_set = match mem::take(&mut self.monitor_set) {
             MonitorSet::Normal {
@@ -824,8 +849,9 @@ impl<W: LayoutElement> Layout<W> {
                     // left, both will be empty and one of them needs to be removed.
                     // clean_up_workspaces takes care of this.
                     if stopped_ws_switch
-                        || (source.options.layout.empty_workspace_above_first
-                            && source.workspaces.len() == 2)
+                        || (source.workspace_switch.is_none()
+                        && source.options.layout.empty_workspace_above_first
+                        && source.workspaces.len() == 2)
                     {
                         source.clean_up_workspaces();
                     }
@@ -979,6 +1005,7 @@ impl<W: LayoutElement> Layout<W> {
         is_full_width: bool,
         is_floating: bool,
         activate: ActivateWindow,
+        force_unhide_workspace: bool,
     ) -> Option<&Output> {
         let scrolling_height = height.map(SizeChange::from);
         let id = window.id().clone();
@@ -1055,6 +1082,7 @@ impl<W: LayoutElement> Layout<W> {
                     scrolling_width,
                     is_full_width,
                     is_floating,
+                    force_unhide_workspace,
                 );
 
                 if activate.map_smart(|| false) {
@@ -1213,10 +1241,12 @@ impl<W: LayoutElement> Layout<W> {
                             }
 
                             // Special case handling when empty_workspace_above_first is set and all
-                            // workspaces are empty.
+                            // workspaces are empty. With a hidden workspace present
+                            // ([empty, hidden-named]) there is nothing to collapse.
                             if mon.options.layout.empty_workspace_above_first
                                 && mon.workspaces.len() == 2
                                 && mon.workspace_switch.is_none()
+                                && !mon.workspaces.iter().any(|ws| ws.hidden)
                             {
                                 assert!(!mon.workspaces[0].has_windows_or_name());
                                 assert!(!mon.workspaces[1].has_windows_or_name());
@@ -1387,6 +1417,11 @@ impl<W: LayoutElement> Layout<W> {
             MonitorSet::NoOutputs { workspaces } => {
                 for (idx, ws) in workspaces.iter_mut().enumerate() {
                     if ws.id() == id {
+                        // Unnaming removes the only way to unhide this workspace later
+                        // (unhide/toggle-visibility both look workspaces up by name), so
+                        // it must not be left hidden or pending a hide-on-switch-away.
+                        ws.hidden = false;
+                        ws.needs_hidden = false;
                         ws.unname();
 
                         // Clean up empty workspaces.
@@ -1592,7 +1627,7 @@ impl<W: LayoutElement> Layout<W> {
                         Some(WorkspaceSwitch::Gesture(gesture))
                             if gesture.current_idx.floor() == workspace_idx as f64
                                 || gesture.current_idx.ceil() == workspace_idx as f64 => {}
-                        _ => mon.switch_workspace(workspace_idx),
+                        _ => mon.switch_workspace(workspace_idx, false),
                     }
 
                     return;
@@ -1628,7 +1663,7 @@ impl<W: LayoutElement> Layout<W> {
                         Some(WorkspaceSwitch::Gesture(gesture))
                             if gesture.current_idx.floor() == workspace_idx as f64
                                 || gesture.current_idx.ceil() == workspace_idx as f64 => {}
-                        _ => mon.switch_workspace(workspace_idx),
+                        _ => mon.switch_workspace(workspace_idx, false),
                     }
 
                     return;
@@ -1734,7 +1769,8 @@ impl<W: LayoutElement> Layout<W> {
                 for mon in monitors {
                     for ws in &mon.workspaces {
                         for (tile, layout) in ws.tiles_with_ipc_layouts() {
-                            f(tile.window(), Some(&mon.output), Some(ws.id()), layout);
+                            let output = if ws.hidden { None } else { Some(&mon.output) };
+                            f(tile.window(), output, Some(ws.id()), layout);
                         }
                     }
                 }
@@ -1830,6 +1866,16 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn monitor_for_workspace(&self, workspace_name: &str) -> Option<&Monitor<W>> {
         self.monitors().find(|monitor| {
+            monitor.workspaces.iter().any(|ws| {
+                ws.name
+                    .as_ref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(workspace_name))
+            })
+        })
+    }
+
+    pub fn monitor_for_workspace_mut(&mut self, workspace_name: &str) -> Option<&mut Monitor<W>> {
+        self.monitors_mut().find(|monitor| {
             monitor.workspaces.iter().any(|ws| {
                 ws.name
                     .as_ref()
@@ -2247,11 +2293,11 @@ impl<W: LayoutElement> Layout<W> {
         monitor.switch_workspace_down();
     }
 
-    pub fn switch_workspace(&mut self, idx: usize) {
+    pub fn switch_workspace(&mut self, idx: usize, force_unhide: bool) {
         let Some(monitor) = self.active_monitor() else {
             return;
         };
-        monitor.switch_workspace(idx);
+        monitor.switch_workspace(idx, force_unhide);
     }
 
     pub fn switch_workspace_auto_back_and_forth(&mut self, idx: usize) {
@@ -2981,7 +3027,11 @@ impl<W: LayoutElement> Layout<W> {
                     clock,
                     options,
                 );
-                mon.insert_workspace(ws, 0, false);
+                if ws.hidden {
+                    mon.insert_hidden_workspace(ws);
+                } else {
+                    mon.insert_workspace(ws, 0, false);
+                }
             }
             MonitorSet::NoOutputs { workspaces } => {
                 let ws =
@@ -3415,6 +3465,7 @@ impl<W: LayoutElement> Layout<W> {
                 removed.width,
                 removed.is_full_width,
                 removed.is_floating,
+                false,
                 None,
             );
             if activate.map_smart(|| false) {
@@ -4287,6 +4338,7 @@ impl<W: LayoutElement> Layout<W> {
                             move_.width,
                             move_.is_full_width,
                             false,
+                            false,
                             None,
                         );
                     }
@@ -4342,6 +4394,7 @@ impl<W: LayoutElement> Layout<W> {
                             move_.width,
                             move_.is_full_width,
                             true,
+                            false,
                             None,
                         );
                     }
@@ -4589,13 +4642,15 @@ impl<W: LayoutElement> Layout<W> {
         // Conversely, if `ws` was the last workspace on a monitor, an
         // empty workspace needs to be added after.
 
-        if let MonitorSet::Normal {
-            monitors,
-            active_monitor_idx,
-            ..
-        } = &mut self.monitor_set
-        {
-            let monitor = &mut monitors[*active_monitor_idx];
+        if let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set {
+            // Apply the compensation on the monitor that actually owns the
+            // workspace; it is not necessarily the active one.
+            let Some(monitor) = monitors
+                .iter_mut()
+                .find(|mon| mon.workspaces.iter().any(|ws| ws.id() == wsid))
+            else {
+                return;
+            };
             if monitor.options.layout.empty_workspace_above_first
                 && monitor
                     .workspaces
@@ -4604,11 +4659,15 @@ impl<W: LayoutElement> Layout<W> {
             {
                 monitor.add_workspace_top();
             }
-            if monitor
+            // The named workspace may have been the last visible one (the trailing
+            // empty, doubling as the hidden-block guard), so restore an empty one
+            // after it.
+            let visible_end = monitor
                 .workspaces
-                .last()
-                .is_some_and(|last| last.id() == wsid)
-            {
+                .iter()
+                .position(|ws| ws.hidden)
+                .unwrap_or(monitor.workspaces.len());
+            if visible_end > 0 && monitor.workspaces[visible_end - 1].id() == wsid {
                 monitor.add_workspace_bottom();
             }
         }
