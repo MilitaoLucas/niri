@@ -7,7 +7,7 @@ use calloop::timer::{TimeoutAction, Timer};
 use calloop::RegistrationToken;
 use input::event::gesture::GestureEventCoordinates as _;
 use niri_config::{
-    is_keysym_modifier, Action, Bind, Binds, BoundAction, Config, Key, ModKey, Modifiers,
+    Action, Bind, Binds, BoundAction, Config, Key, ModKey, Modifiers,
     MruDirection, SwitchBinds, Trigger, WorkspaceReference,
 };
 use niri_ipc::LayoutSwitchTarget;
